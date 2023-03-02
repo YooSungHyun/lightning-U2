@@ -1,5 +1,5 @@
-torch==1.13.0
-pytorch-lightning==1.8.3.post0
+torch
+pytorch-lightning
 pandas
 numpy
 setproctitle
@@ -8,4 +8,9 @@ flake8
 black
 tqdm
 scikit-learn
-simple_parsing==0.0.21
+simple_parsing
+datasets
+librosa
+matplotlib
+pyctcdecode
+transformers
