@@ -104,6 +104,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.u2
 env/
 venv/
 ENV/
@@ -137,3 +138,6 @@ deepspeed_all_result.txt
 model_outputs/
 lightning_logs/
 distributed_result/
+
+scripts/
+*.sh

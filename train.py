@@ -6,17 +6,15 @@ from datetime import timedelta
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import LearningRateMonitor
-from models.dense_model.model import CustomNet
-from models.rnn_model.model import LSTMModel
-from models.dense_model.datamodule import CustomDataModule
+from models.u2.lightningmodule import BiU2
+from models.u2.datamodule import BiU2DataModule
 from simple_parsing import ArgumentParser
 from arguments.training_args import TrainingArguments
-from utils.compy import dataclass_to_namespace
-from utils.config_loader import load_config, config_to_dict
+from utils.comfy import dataclass_to_namespace
 
 
 def main(hparams):
-    wandb_logger = WandbLogger(project="lightning-template", name="default", save_dir="./")
+    wandb_logger = WandbLogger(project="U2_2plus", name="default", save_dir="./")
     pl.seed_everything(hparams.seed)
     os.makedirs(hparams.output_dir, exist_ok=True)
     hparams.logger = wandb_logger
@@ -45,31 +43,18 @@ def main(hparams):
         raise NotImplementedError("If you want to another deepspeed option and config, PLZ IMPLEMENT FIRST!!")
     trainer = pl.Trainer.from_argparse_args(hparams)
 
-    if hparams.model_select == "linear":
-        datamodule = CustomDataModule(hparams)
-        model = CustomNet(hparams)
-        wandb_logger.watch(model, log="all")
-        trainer.fit(model, datamodule=datamodule)
-        """ TODO If use config like dict follow this line
-        but, model param is duplicated area between training param and model param
-        I want to get training param on run script argument, so I can not use it
-        """
-        # config_cls = load_config(hparams.config_dir)
-        # config = config_to_dict(config_cls)
-        # with open(os.path.join(hparams.output_dir, "config.json"), "w") as f:
-        # json.dump(config, f, ensure_ascii=False, indent=4)
-    else:
-        model = LSTMModel(hparams)
-        wandb_logger.watch(model, log="all")
-        trainer.fit(model)
-    # TODO If finetuning follow this line
-    # PreTrainedLightningModule.load_state_dict(
-    #     torch.load(
-    #         "",
-    #         map_location="cuda",
-    #     ),
-    #     strict=False,
-    # )
+    datamodule = BiU2DataModule(hparams)
+    model = BiU2(hparams)
+    wandb_logger.watch(model, log="all")
+    trainer.fit(model, datamodule=datamodule)
+    """ TODO If use config like dict follow this line
+    but, model param is duplicated area between training param and model param
+    I want to get training param on run script argument, so I can not use it
+    """
+    # config_cls = load_config(hparams.config_dir)
+    # config = config_to_dict(config_cls)
+    # with open(os.path.join(hparams.output_dir, "config.json"), "w") as f:
+    # json.dump(config, f, ensure_ascii=False, indent=4)
     checkpoint_callback.best_model_path
 
 
