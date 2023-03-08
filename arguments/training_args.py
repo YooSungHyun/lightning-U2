@@ -25,3 +25,5 @@ class TrainingArguments:
     local_rank: int = None
     div_factor: int = 25  # initial_lr = max_lr/div_factor
     deepspeed_config: str = "ds_config/zero2.json"
+    label_name: str = "syllable_input_ids"
+    encoder_type: str = "conformer"
