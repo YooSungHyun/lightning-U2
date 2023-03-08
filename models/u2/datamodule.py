@@ -2,14 +2,14 @@ import os
 import torch
 import pytorch_lightning as pl
 from utils.dataset_utils import get_concat_dataset, get_cache_file_path, set_cache_log
-from utils.config_loader import load_config
+import torchaudio
 from torchaudio.transforms import MelSpectrogram, TimeMasking, FrequencyMasking
 import matplotlib.pyplot as plt
 import numpy as np
+import random
 from argparse import Namespace
 from datasets import Dataset
 from models.u2.dataloader import AudioDataLoader
-from models.u2.datasampler import DistributedBucketSampler
 
 # 저는 1 batch로만 테스트되어서 group_by_length sampler가 오히려 느리기만 합니다.
 # from transformers.trainer_pt_utils import DistributedLengthGroupedSampler
@@ -24,7 +24,7 @@ WINDOWS = {
 
 class BiU2DataModule(pl.LightningDataModule):
     # https://pytorch-lightning.readthedocs.io/en/stable/data/datamodule.html#datamodules
-    def __init__(self, args: Namespace):
+    def __init__(self, config: dict, args: Namespace):
         super().__init__()
         self.hf_data_dirs = args.hf_data_dirs
         self.pl_data_dir = args.pl_data_dir
@@ -33,8 +33,6 @@ class BiU2DataModule(pl.LightningDataModule):
         self.per_device_train_batch_size = args.per_device_train_batch_size
         self.per_device_eval_batch_size = args.per_device_eval_batch_size
         self.num_proc = args.num_proc
-        self.label_name = args.label_name
-        config = load_config(args.model_config)["data"]
         self.pad_token_id = config["audio"]["pad_token_id"]
         self.bos_token_id = config["text"]["bos_token_id"]
         self.window_stride_sec = config["audio"]["window_stride_sec"]
@@ -42,11 +40,14 @@ class BiU2DataModule(pl.LightningDataModule):
         self.sample_rate = config["audio"]["sample_rate"]
         self.window = WINDOWS.get(config["audio"]["window"], WINDOWS["hamming"])
         self.normalize = config["audio"]["normalize"]
+        self.speed_augment = config["audio"]["speed_augment"]
+        self.speed_aug_conf = config["audio"]["speed_aug_conf"]
         self.spec_augment = config["audio"]["spec_augment"]
-        self.freq_mask_para = config["audio"]["freq_mask_para"]
-        self.time_mask_para = config["audio"]["time_mask_para"]
-        self.freq_mask_cnt = config["audio"]["freq_mask_cnt"]
-        self.time_mask_cnt = config["audio"]["time_mask_cnt"]
+        self.spec_aug_conf = config["audio"]["spec_aug_conf"]
+        self.specsub_augment = config["audio"]["specsub_augment"]
+        self.spec_sub_conf = config["audio"]["spec_sub_conf"]
+        self.spectrim_augment = config["audio"]["spectrim_augment"]
+        self.spec_trim_conf = config["audio"]["spec_trim_conf"]
         self.n_mels = config["audio"]["n_mels"]
 
     def raw_to_logmelspect(self, batch, idx):
@@ -63,7 +64,12 @@ class BiU2DataModule(pl.LightningDataModule):
 
         # log_mel spec (channel(mono(1), 2~3 etc), n_mels, time)
         mel_spect = MelSpectrogram(
-            sample_rate=self.sample_rate, win_length=win_length, n_fft=n_fft, hop_length=hop_length, n_mels=self.n_mels
+            sample_rate=self.sample_rate,
+            win_length=win_length,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=self.n_mels,
+            window_fn=self.window,
         )(raw_audio)
         log_melspect = torch.log1p(mel_spect)
 
@@ -75,17 +81,85 @@ class BiU2DataModule(pl.LightningDataModule):
         batch["input_values"] = log_melspect
         return batch
 
-    def spec_augmentation(self, batch):
+    def spec_augmentation(self, batch, freq_mask_para, time_mask_para, freq_mask_cnt, time_mask_cnt):
         # torch.random.manual_seed(self.seed)
         # data shape: (channel, mel, seq)
         data = torch.FloatTensor(batch["input_values"])
 
-        for _ in range(self.freq_mask_cnt):
-            data = FrequencyMasking(freq_mask_param=self.freq_mask_para)(data)
-        for _ in range(self.time_mask_cnt):
-            data = TimeMasking(time_mask_param=self.time_mask_para)(data)
+        for _ in range(freq_mask_cnt):
+            data = FrequencyMasking(freq_mask_param=freq_mask_para)(data)
+        for _ in range(time_mask_cnt):
+            data = TimeMasking(time_mask_param=time_mask_para)(data)
         # input_values shape: (channel, mel, seq)
         batch["input_values"] = data
+        return batch
+
+    def speed_perturb(self, batch, speeds=None):
+        """Apply speed perturb to the data.
+        Inplace operation.
+        Args:
+            data: Iterable[{key, wav, label, sample_rate}]
+            speeds(List[float]): optional speed
+        Returns:
+            Iterable[{key, wav, label, sample_rate}]
+        """
+        if speeds is None:
+            speeds = [0.9, 1.0, 1.1]
+        assert "input_values" in batch
+        sample_rate = 16000
+        waveform = batch["input_values"]
+        speed = random.choice(speeds)
+        if speed != 1.0:
+            wav, _ = torchaudio.sox_effects.apply_effects_tensor(
+                waveform.unsqueeze(0), sample_rate, [["speed", str(speed)], ["rate", str(sample_rate)]]
+            )
+            batch["input_values"] = wav[0].tolist()
+
+        return batch
+
+    def spec_sub(self, batch, max_t=20, num_t_sub=3):
+        """Do spec substitute
+        Inplace operation
+        ref: U2++, section 3.2.3 [https://arxiv.org/abs/2106.05642]
+        Args:
+            data: Iterable[{key, feat, label}]
+            max_t: max width of time substitute
+            num_t_sub: number of time substitute to apply
+        Returns
+            Iterable[{key, feat, label}]
+        """
+        assert "input_values" in batch
+        x = batch["input_values"]
+        assert isinstance(x, torch.Tensor)
+        y = x.clone().detach()
+        max_frames = y.size(0)
+        for i in range(num_t_sub):
+            start = random.randint(0, max_frames - 1)
+            length = random.randint(1, max_t)
+            end = min(max_frames, start + length)
+            # only substitute the earlier time chosen randomly for current time
+            pos = random.randint(0, start)
+            y[start:end, :] = x[start - pos : end - pos, :]
+        batch["input_values"] = y
+        return batch
+
+    def spec_trim(self, batch, max_t=20):
+        """Trim tailing frames. Inplace operation.
+        ref: TrimTail [https://arxiv.org/abs/2211.00522]
+        Args:
+            data: Iterable[{key, feat, label}]
+            max_t: max width of length trimming
+        Returns
+            Iterable[{key, feat, label}]
+        """
+        assert "input_values" in batch
+        x = batch["input_values"]
+        assert isinstance(x, torch.Tensor)
+        max_frames = x.size(0)
+        length = random.randint(1, max_t)
+        if length < max_frames / 2:
+            y = x.clone().detach()[: max_frames - length]
+            batch["input_values"] = y
         return batch
 
     def mean_var_norm(self, batch):
@@ -110,12 +184,29 @@ class BiU2DataModule(pl.LightningDataModule):
             print(f"이미 datasets이 존재합니다. {train_type} save과정은 스킵됩니다!!!")
         else:
             datasets = get_concat_dataset(source_dataset_dirs, train_type)
-
+            datasets.set_format("torch", ["input_values"])
             if train_type == "train":
                 num_shards = self.num_shards
             else:
                 num_shards = 1
 
+            if self.speed_augment:
+                speed_aug_task_name = "speed_perturb"
+                for source_dataset_dir in source_dataset_dirs:
+                    cache_file_name = get_cache_file_path(source_dataset_dir, speed_aug_task_name, train_type)
+                    # wenet U2++'s speed perturb
+                    datasets = datasets.map(
+                        self.speed_perturb,
+                        cache_file_name=cache_file_name,
+                        num_proc=self.num_proc,
+                        fn_kwargs=self.speed_aug_conf,
+                    )
+                    set_cache_log(
+                        dataset_dir=source_dataset_dir,
+                        num_proc=self.num_proc,
+                        cache_task_func_name=speed_aug_task_name,
+                        train_type=train_type,
+                    )
             if self.normalize:
                 normalize_task_name = "normalize"
                 spec_aug_task_name = "norm_spec_augmentation"
@@ -145,7 +236,10 @@ class BiU2DataModule(pl.LightningDataModule):
             if train_type == "train":
                 cache_file_name = get_cache_file_path(target_dataset_dir, spec_aug_task_name, train_type)
                 datasets = datasets.map(
-                    self.spec_augmentation, cache_file_name=cache_file_name, num_proc=self.num_proc
+                    self.spec_augmentation,
+                    cache_file_name=cache_file_name,
+                    num_proc=self.num_proc,
+                    fn_kwargs=self.spec_aug_conf,
                 )
                 set_cache_log(
                     dataset_dir=target_dataset_dir,
