@@ -34,7 +34,12 @@ class BiU2(pl.LightningModule):
         decoder = BiTransformerDecoder(
             vocab_size=len(self.tokenizer), encoder_output_size=encoder.output_size(), **config_cls["model"]["decoder"]
         )
-        ctc = CTC(len(self.tokenizer), encoder.output_size())
+        ctc = CTC(
+            len(self.tokenizer),
+            encoder.output_size(),
+            reduction=config_cls.model.ctc_reduction,
+            zero_infinity=config_cls.model.ctc_zero_inf,
+        )
         self.calc_wer = WordErrorRate()
         self.calc_cer = CharErrorRate()
         self.model = ASRModel(

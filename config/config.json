@@ -32,10 +32,12 @@
             "src_attention_dropout_rate": 0.1
         },
         "ctc_weight": 0.3,
+        "ctc_reduction": "mean",
+        "ctc_zero_inf": false,
         "reverse_weight": 0.3,
         "lsm_weight": 0.1,
         "length_normalized_loss": false,
-        "vocab_size": 2845
+        "vocab_size": 72
     },
     "data": {
         "audio": {

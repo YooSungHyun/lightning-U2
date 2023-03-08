@@ -33,6 +33,7 @@ class BiU2DataModule(pl.LightningDataModule):
         self.per_device_train_batch_size = args.per_device_train_batch_size
         self.per_device_eval_batch_size = args.per_device_eval_batch_size
         self.num_proc = args.num_proc
+        self.label_name = args.label_name
         config = load_config(args.model_config)["data"]
         self.pad_token_id = config["audio"]["pad_token_id"]
         self.bos_token_id = config["text"]["bos_token_id"]
@@ -138,7 +139,7 @@ class BiU2DataModule(pl.LightningDataModule):
                 self.raw_to_logmelspect,
                 num_proc=self.num_proc,
                 with_indices=True,
-                remove_columns=["length", "syllabel_labels"],
+                remove_columns=["length"],
             )
 
             if train_type == "train":
@@ -157,13 +158,15 @@ class BiU2DataModule(pl.LightningDataModule):
             datasets = datasets.map(
                 lambda batch: {
                     "input_values": np.transpose(batch["input_values"][0]),
-                    "input_ids": batch["grapheme_labels"]["input_ids"],
+                    "grapheme_input_ids": batch["grapheme_labels"]["input_ids"],
+                    "syllable_input_ids": batch["syllabel_labels"]["input_ids"],
                     "audio_len": len(np.transpose(batch["input_values"][0])),
-                    "label_len": len(batch["grapheme_labels"]["input_ids"]),
+                    "grapheme_label_len": len(batch["grapheme_labels"]["input_ids"]),
+                    "syllable_label_len": len(batch["syllabel_labels"]["input_ids"]),
                 },
                 cache_file_name=cache_file_name,
                 num_proc=self.num_proc,
-                remove_columns=["grapheme_labels"],
+                remove_columns=["grapheme_labels", "syllabel_labels"],
             )
             set_cache_log(
                 dataset_dir=target_dataset_dir,
@@ -188,47 +191,35 @@ class BiU2DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.train_datasets = get_concat_dataset([self.pl_data_dir], "train")
-            self.train_datasets.set_format("torch", ["input_values", "syllable_input_ids"])
+            self.train_datasets.set_format("torch", ["input_values", self.label_name])
             self.val_datasets = get_concat_dataset([self.pl_data_dir], "dev")
-            self.val_datasets.set_format("torch", ["input_values", "syllable_input_ids"])
+            self.val_datasets.set_format("torch", ["input_values", self.label_name])
 
         if stage == "test":
             self.clean_datasets = get_concat_dataset([self.pl_data_dir], "eval_clean")
-            self.clean_datasets.set_format("torch", ["input_values", "syllable_input_ids"])
+            self.clean_datasets.set_format("torch", ["input_values", self.label_name])
             self.other_datasets = get_concat_dataset([self.pl_data_dir], "eval_other")
-            self.other_datasets.set_format("torch", ["input_values", "syllable_input_ids"])
+            self.other_datasets.set_format("torch", ["input_values", self.label_name])
 
     def train_dataloader(self):
         # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 fit() method가 사용합니다.
-
-        train_sampler = DistributedBucketSampler(
-            dataset=self.train_datasets,
-            model_input_name="input_values",
-            lengths=self.train_datasets["syllable_label_len"],
-        )
         return AudioDataLoader(
             dataset=self.train_datasets,
             batch_size=self.per_device_train_batch_size,
             num_workers=self.num_proc,
             pad_token_id=self.pad_token_id,
-            sampler=train_sampler,
+            label_name=self.label_name,
             pin_memory=True,
         )
 
     def val_dataloader(self):
         # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 fit(), validate() method가 사용합니다.
-
-        val_sampler = DistributedBucketSampler(
-            dataset=self.val_datasets,
-            model_input_name="input_values",
-            lengths=self.val_datasets["syllable_label_len"],
-        )
         return AudioDataLoader(
             dataset=self.val_datasets,
             batch_size=self.per_device_eval_batch_size,
             num_workers=self.num_proc,
             pad_token_id=self.pad_token_id,
-            sampler=val_sampler,
+            label_name=self.label_name,
             pin_memory=True,
         )
 
@@ -240,6 +231,7 @@ class BiU2DataModule(pl.LightningDataModule):
                 batch_size=1,
                 num_workers=self.num_proc,
                 pad_token_id=self.pad_token_id,
+                label_name=self.label_name,
                 pin_memory=True,
             ),
             AudioDataLoader(
@@ -247,6 +239,7 @@ class BiU2DataModule(pl.LightningDataModule):
                 batch_size=1,
                 num_workers=self.num_proc,
                 pad_token_id=self.pad_token_id,
+                label_name=self.label_name,
                 pin_memory=True,
             ),
         ]
