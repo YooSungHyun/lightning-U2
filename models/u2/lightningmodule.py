@@ -5,6 +5,7 @@ from utils.cmvn import load_cmvn
 from utils.config_loader import load_config
 from models.u2.transformer.cmvn import GlobalCMVN
 from models.u2.transformer.encoder import ConformerEncoder
+from models.u2.efficient_conformer.encoder import EfficientConformerEncoder
 from models.u2.transformer.decoder import BiTransformerDecoder
 from models.u2.transformer.ctc import CTC
 from models.u2.transformer.asr_model import ASRModel
@@ -17,6 +18,7 @@ class BiU2(pl.LightningModule):
         super().__init__()
         self.args = args
         config_cls = load_config(args.model_config)
+        mel_feature_len = config_cls.data.audio.n_mels
         if os.path.isfile(os.path.join(args.output_dir, "tokenizer_config.json")):
             self.tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(os.path.join(args.output_dir))
         else:
@@ -28,7 +30,17 @@ class BiU2(pl.LightningModule):
             global_cmvn = GlobalCMVN(torch.from_numpy(mean).float(), torch.from_numpy(istd).float())
         else:
             global_cmvn = None
-        encoder = ConformerEncoder(global_cmvn=global_cmvn, **config_cls["model"]["encoder"])
+        if args.encoder_type == "conformer":
+            encoder = ConformerEncoder(
+                input_size=mel_feature_len, global_cmvn=global_cmvn, **config_cls["model"]["encoder"]
+            )
+        elif args.encoder_type == "EfficientConformer":
+            encoder = EfficientConformerEncoder(
+                input_size=mel_feature_len,
+                global_cmvn=global_cmvn,
+                **config_cls["encoder"],
+                **config_cls["encoder"]["efficient_conf"] if "efficient_conf" in config_cls["encoder"] else {}
+            )
         assert 0.0 < config_cls.model.reverse_weight < 1.0
         assert config_cls.model.decoder.r_num_blocks > 0
         decoder = BiTransformerDecoder(
