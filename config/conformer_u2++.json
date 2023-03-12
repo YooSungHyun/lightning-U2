@@ -34,23 +34,45 @@
         "lsm_weight": 0.1,
         "length_normalized_loss": false,
         "reverse_weight": 0.3,
-        "ctc_reduction": "mean",
+        "ctc_reduction": "sum",
         "ctc_zero_inf": false,
         "vocab_size": 72
     },
     "data": {
         "audio": {
+            "n_mels": 80,
             "window_stride_sec": 0.01,
             "window_size_sec": 0.025,
             "sample_rate": 16000,
             "window": "hamming",
+            "speed_augment": false,
+            "speed_aug_conf": {
+                "speeds": [
+                    0.9,
+                    1.0,
+                    1.1
+                ]
+            },
             "normalize": false,
             "spec_augment": true,
-            "n_mels": 80,
-            "time_mask_para": 40,
-            "freq_mask_para": 20,
-            "time_mask_cnt": 1,
-            "freq_mask_cnt": 1,
+            "spec_aug_conf": {
+                "time_mask_para": 50,
+                "freq_mask_para": 10,
+                "time_mask_cnt": 2,
+                "freq_mask_cnt": 2
+            },
+            "filter_conformer_conf": {
+                "output_len_prob": 0.80
+            },
+            "specsub_augment": false,
+            "spec_sub_conf": {
+                "num_t_sub": 3,
+                "max_t": 30
+            },
+            "spectrim_augment": false,
+            "spec_trim_conf": {
+                "max_t": 50
+            },
             "pad_token_id": 0
         },
         "text": {

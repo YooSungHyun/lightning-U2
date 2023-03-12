@@ -2,6 +2,7 @@ import os
 import torch
 import pytorch_lightning as pl
 from utils.dataset_utils import get_concat_dataset, get_cache_file_path, set_cache_log
+from utils.config_loader import load_config
 import torchaudio
 from torchaudio.transforms import MelSpectrogram, TimeMasking, FrequencyMasking
 import matplotlib.pyplot as plt
@@ -10,6 +11,8 @@ import random
 from argparse import Namespace
 from datasets import Dataset
 from models.u2.dataloader import AudioDataLoader
+from typing import Union
+from packaging import version
 
 # 저는 1 batch로만 테스트되어서 group_by_length sampler가 오히려 느리기만 합니다.
 # from transformers.trainer_pt_utils import DistributedLengthGroupedSampler
@@ -20,11 +23,17 @@ WINDOWS = {
     "blackman": torch.blackman_window,
     "bartlett": torch.bartlett_window,
 }
+KERNEL_STRIDE_SIZE = {
+    "linear": None,
+    "conv2d": [[3, 3], [2, 2]],
+    "conv2d6": [[3, 5], [2, 3]],
+    "conv2d8": [[3, 3, 3], [2, 2, 2]],
+}
 
 
 class BiU2DataModule(pl.LightningDataModule):
     # https://pytorch-lightning.readthedocs.io/en/stable/data/datamodule.html#datamodules
-    def __init__(self, config: dict, args: Namespace):
+    def __init__(self, args: Namespace):
         super().__init__()
         self.hf_data_dirs = args.hf_data_dirs
         self.pl_data_dir = args.pl_data_dir
@@ -33,22 +42,28 @@ class BiU2DataModule(pl.LightningDataModule):
         self.per_device_train_batch_size = args.per_device_train_batch_size
         self.per_device_eval_batch_size = args.per_device_eval_batch_size
         self.num_proc = args.num_proc
-        self.pad_token_id = config["audio"]["pad_token_id"]
-        self.bos_token_id = config["text"]["bos_token_id"]
-        self.window_stride_sec = config["audio"]["window_stride_sec"]
-        self.window_size_sec = config["audio"]["window_size_sec"]
-        self.sample_rate = config["audio"]["sample_rate"]
-        self.window = WINDOWS.get(config["audio"]["window"], WINDOWS["hamming"])
-        self.normalize = config["audio"]["normalize"]
-        self.speed_augment = config["audio"]["speed_augment"]
-        self.speed_aug_conf = config["audio"]["speed_aug_conf"]
-        self.spec_augment = config["audio"]["spec_augment"]
-        self.spec_aug_conf = config["audio"]["spec_aug_conf"]
-        self.specsub_augment = config["audio"]["specsub_augment"]
-        self.spec_sub_conf = config["audio"]["spec_sub_conf"]
-        self.spectrim_augment = config["audio"]["spectrim_augment"]
-        self.spec_trim_conf = config["audio"]["spec_trim_conf"]
-        self.n_mels = config["audio"]["n_mels"]
+        self.label_name = args.label_name
+        config = load_config(args.model_config)
+        self.pad_token_id = config.data.audio.pad_token_id
+        self.bos_token_id = config.data.text.bos_token_id
+        self.window_stride_sec = config.data.audio.window_stride_sec
+        self.window_size_sec = config.data.audio.window_size_sec
+        self.sample_rate = config.data.audio.sample_rate
+        self.window = WINDOWS.get(config.data.audio.window, WINDOWS["hamming"])
+        self.normalize = config.data.audio.normalize
+        self.speed_augment = config.data.audio.speed_augment
+        self.speed_aug_conf = config.data.audio.speed_aug_conf
+        self.spec_augment = config.data.audio.spec_augment
+        self.spec_aug_conf = config.data.audio.spec_aug_conf
+        self.filter_conformer_len_prob = config.data.audio.filter_conformer_conf
+        self.specsub_augment = config.data.audio.specsub_augment
+        self.spec_sub_conf = config.data.audio.spec_sub_conf
+        self.spectrim_augment = config.data.audio.spectrim_augment
+        self.spec_trim_conf = config.data.audio.spec_trim_conf
+        self.n_mels = config.data.audio.n_mels
+        self.kernel_stride_size = KERNEL_STRIDE_SIZE.get(
+            config.model.encoder.input_layer, KERNEL_STRIDE_SIZE["conv2d"]
+        )
 
     def raw_to_logmelspect(self, batch, idx):
         # window_size는 통상 사람이 변화를 느끼는 한계인 25ms을 기본으로 합니다 (0.025)
@@ -166,6 +181,38 @@ class BiU2DataModule(pl.LightningDataModule):
         data = np.array(batch["input_values"])
         batch["input_values"] = np.array([(data - data.mean()) / np.sqrt(data.var() + 1e-7)])[0]
         return batch
+
+    def _get_feat_extract_output_lengths(self, input_lengths: Union[torch.LongTensor, int]):
+        """
+        Computes the output length of the convolutional layers
+        """
+
+        def _conv_out_length(input_length, kernel_size, stride):
+            def torch_int_div(tensor1, tensor2):
+                """
+                A function that performs integer division across different versions of PyTorch.
+                """
+                parsed_torch_version_base = version.parse(version.parse(torch.__version__).base_version)
+
+                is_torch_less_than_1_8 = parsed_torch_version_base < version.parse("1.8.0")
+                if is_torch_less_than_1_8:
+                    return tensor1 // tensor2
+                else:
+                    return torch.div(tensor1, tensor2, rounding_mode="floor")
+
+            # 1D convolutional layer output length formula taken
+            # from https://pytorch.org/docs/stable/generated/torch.nn.Conv1d.html
+            return torch_int_div(input_length - kernel_size, stride) + 1
+
+        for kernel_size, stride in zip(self.kernel_stride_size[0], self.kernel_stride_size[1]):
+            input_lengths = _conv_out_length(input_lengths, kernel_size, stride)
+
+        return input_lengths
+
+    def filter_conformer_ctc_len(self, batch, output_len_prob: float = 1.0):
+        cnn_output_len = self._get_feat_extract_output_lengths(len(batch["input_values"]))
+        label_len = len(batch[self.label_name])
+        return (cnn_output_len * output_len_prob).floor() >= label_len
 
     def save_raw_to_logmelspect_datasets(
         self, source_dataset_dirs: list[str], target_dataset_dir: str, train_type: str
@@ -285,6 +332,20 @@ class BiU2DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.train_datasets = get_concat_dataset([self.pl_data_dir], "train")
+            self.train_datasets = self.train_datasets.filter(
+                self.filter_conformer_ctc_len, num_proc=self.num_proc, fn_kwargs=self.filter_conformer_len_prob
+            )
+            print(len(self.train_datasets))
+            if self.specsub_augment:
+                self.train_datasets = self.train_datasets.map(
+                    self.spec_sub,
+                    num_proc=self.num_proc,
+                    fn_kwargs=self.spec_sub_conf,
+                )
+            if self.spectrim_augment:
+                self.train_datasets = self.train_datasets.map(
+                    self.spec_trim, num_proc=self.num_proc, fn_kwargs=self.spec_trim_conf
+                )
             self.train_datasets.set_format("torch", ["input_values", self.label_name])
             self.val_datasets = get_concat_dataset([self.pl_data_dir], "dev")
             self.val_datasets.set_format("torch", ["input_values", self.label_name])
