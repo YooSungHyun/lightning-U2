@@ -216,6 +216,8 @@ class ASRModel(torch.nn.Module):
 
         # Let's assume B = batch_size and N = beam_size
         # 1. Encoder
+        # 청크 단위로 데이터가 들어오면, Encoder의 은닉상태를 cache로 계속 저장하여 다음상태에게 넘겨줌으로써,
+        # 다음 인코더에서의 어텐션과 Conformer Module에서 사용되어, 이후 Decoder Text예측에 사용된다.
         encoder_out, encoder_mask = self._forward_encoder(
             speech, speech_lengths, decoding_chunk_size, num_decoding_left_chunks, simulate_streaming
         )  # (B, maxlen, encoder_dim)
