@@ -212,7 +212,7 @@ class BiU2DataModule(pl.LightningDataModule):
     def filter_conformer_ctc_len(self, batch, output_len_prob: float = 1.0):
         cnn_output_len = self._get_feat_extract_output_lengths(len(batch["input_values"]))
         label_len = len(batch[self.label_name])
-        return (cnn_output_len * output_len_prob).floor() >= label_len
+        return (cnn_output_len * output_len_prob).floor() > label_len
 
     def save_raw_to_logmelspect_datasets(
         self, source_dataset_dirs: list[str], target_dataset_dir: str, train_type: str
