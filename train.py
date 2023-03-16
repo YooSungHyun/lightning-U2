@@ -21,10 +21,10 @@ def main(hparams):
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=hparams.output_dir,
-        save_top_k=3,
+        save_top_k=1,
         mode="min",
-        monitor="val_loss",
-        filename="lightning-template-{epoch:02d}-{val_loss:.4f}",
+        monitor="val_cer",
+        filename="lightning-template-{epoch:02d}-{val_cer:.4f}",
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     hparams.callbacks = [checkpoint_callback, lr_monitor]

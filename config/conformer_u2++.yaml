@@ -1,0 +1,64 @@
+data:
+  audio:
+    filter_conformer_conf:
+      output_len_prob: 1.0
+    log_mel_conf:
+      n_mels: 80
+      sample_rate: 16000
+      window: hamming
+      window_size_sec: 0.025
+      window_stride_sec: 0.01
+    normalize: true
+    pad_token_id: 0
+    spec_aug_conf:
+      freq_mask_cnt: 2
+      freq_mask_para: 10
+      time_mask_cnt: 2
+      time_mask_para: 50
+    spec_sub_conf: null
+      # max_t: 30
+      # num_t_sub: 3
+    spec_trim_conf: null
+      # max_t: 50
+    speed_aug_conf:
+      speeds: [0.9,1.0,1.1]
+  text:
+    bos_token_id: 2
+    eos_token_id: 3
+    pad_token_id: 0
+model:
+  ctc_reduction: sum
+  ctc_weight: 0.3
+  ctc_zero_inf: true
+  decoder:
+    attention_heads: 4
+    dropout_rate: 0.1
+    linear_units: 2048
+    num_blocks: 3
+    positional_dropout_rate: 0.1
+    r_num_blocks: 3
+    self_attention_dropout_rate: 0.0
+    src_attention_dropout_rate: 0.0
+  encoder:
+    activation_type: swish
+    attention_dropout_rate: 0.0
+    attention_heads: 4
+    causal: true
+    cnn_module_kernel: 8
+    cnn_module_norm: layer_norm
+    dropout_rate: 0.1
+    input_layer: conv2d
+    linear_units: 2048
+    normalize_before: true
+    num_blocks: 12
+    output_size: 256
+    pos_enc_layer_type: rel_pos
+    positional_dropout_rate: 0.1
+    selfattention_layer_type: rel_selfattn
+    use_cnn_module: true
+    use_dynamic_chunk: true
+    use_dynamic_left_chunk: false
+  length_normalized_loss: false
+  lsm_weight: 0.1
+  reverse_weight: 0.3
+  vocab_size: 72

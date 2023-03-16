@@ -1,7 +1,7 @@
 #!/bin/bash
-GPU_IDS=""
+GPU_IDS="0"
 HF_DATA_DIRS=""
-PL_DATA_DIR=""
+PL_DATA_DIR="/ext_disk/stt/datasets/fine-tuning/42maru/final-logmelspect-KsponSpeech-42maru-not-normal-20"
 
 CUDA_VISIBLE_DEVICES=$GPU_IDS \
 python3 train.py \
@@ -29,4 +29,5 @@ python3 train.py \
     --warmup_ratio=0.01 \
     --final_div_factor=10 \
     --div_factor=20 \
-    --label_name=grapheme_input_ids
+    --label_name=grapheme_input_ids \
+    --encoder_type=conformer

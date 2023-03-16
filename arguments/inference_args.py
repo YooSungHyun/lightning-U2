@@ -9,5 +9,8 @@ class InferenceArguments:
     vocab_path: str = "../config/vocab.json"
     model_dir: str = "../model/model.ckpt"
     model_config: str = "../config/config.json"
+    beam_size: int = 10
+    decoding_chunk_size: int = 16
+    num_decoding_left_chunks
     val_on_cpu: bool = False
     lm_path: str = "../model/lm.arpa"

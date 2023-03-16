@@ -1,4 +1,4 @@
-import json
+import yaml
 
 
 class ConfigLoader:
@@ -45,7 +45,6 @@ def config_to_dict(config: ConfigLoader):
 
 def load_config(config_filename: str):
     with open(config_filename, "r") as f:
-        data = f.read()
-    config = json.loads(data)
-    hparams = ConfigLoader(**config)
+        data = yaml.load(f, yaml.FullLoader)
+    hparams = ConfigLoader(**data)
     return hparams

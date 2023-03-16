@@ -15,10 +15,10 @@ class AudioDataLoader(torch.utils.data.DataLoader):
     def _collate_fn(self, batch):
         # batch : input_values: log_melspect, ["grapheme_labels"]["input_ids"]: tokenized labels
         # input_values shape: (seq, mel_cnt)
-        input_audios = [s["input_values"] for s in batch]
-        audio_lengths = torch.IntTensor([s["input_values"].size(0) for s in batch])
-        targets = [torch.as_tensor(s[self.label_name], dtype=torch.int32) for s in batch]
-        target_lengths = torch.IntTensor([len(s[self.label_name]) for s in batch])
+        input_audios = [torch.FloatTensor(s["input_values"]) for s in batch]
+        audio_lengths = torch.IntTensor([len(s["input_values"]) for s in batch])
+        targets = [torch.as_tensor(s[self.label_name]["input_ids"], dtype=torch.int32) for s in batch]
+        target_lengths = torch.IntTensor([len(s[self.label_name]["input_ids"]) for s in batch])
 
         input_audios = pad_sequence(input_audios, batch_first=True, padding_value=self.pad_token_id)
         targets = pad_sequence(targets, batch_first=True, padding_value=self.pad_token_id)

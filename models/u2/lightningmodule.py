@@ -4,7 +4,8 @@ import pytorch_lightning as pl
 from utils.cmvn import load_cmvn
 from utils.config_loader import load_config
 from models.u2.transformer.cmvn import GlobalCMVN
-from models.u2.transformer.encoder import ConformerEncoder
+from models.u2.transformer.encoder import ConformerEncoder, TransformerEncoder
+from models.u2.squeezeformer.encoder import SqueezeformerEncoder
 from models.u2.efficient_conformer.encoder import EfficientConformerEncoder
 from models.u2.transformer.decoder import BiTransformerDecoder
 from models.u2.transformer.ctc import CTC
@@ -18,7 +19,7 @@ class BiU2(pl.LightningModule):
         super().__init__()
         self.args = args
         config_cls = load_config(args.model_config)
-        mel_feature_len = config_cls.data.audio.n_mels
+        mel_feature_len = config_cls.data.audio.log_mel_conf.n_mels
         if os.path.isfile(os.path.join(args.output_dir, "tokenizer_config.json")):
             self.tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(os.path.join(args.output_dir))
         else:
@@ -34,12 +35,20 @@ class BiU2(pl.LightningModule):
             encoder = ConformerEncoder(
                 input_size=mel_feature_len, global_cmvn=global_cmvn, **config_cls["model"]["encoder"]
             )
+        elif args.encoder_type == "squeezeformer":
+            encoder = SqueezeformerEncoder(
+                input_size=mel_feature_len, global_cmvn=global_cmvn, **config_cls["model"]["encoder"]
+            )
         elif args.encoder_type == "EfficientConformer":
             encoder = EfficientConformerEncoder(
                 input_size=mel_feature_len,
                 global_cmvn=global_cmvn,
                 **config_cls["encoder"],
-                **config_cls["encoder"]["efficient_conf"] if "efficient_conf" in config_cls["encoder"] else {}
+                **config_cls["encoder"]["efficient_conf"] if "efficient_conf" in config_cls["encoder"] else {},
+            )
+        else:
+            encoder = TransformerEncoder(
+                input_size=mel_feature_len, global_cmvn=global_cmvn, **config_cls["model"]["encoder"]
             )
         assert 0.0 < config_cls.model.reverse_weight < 1.0
         assert config_cls.model.decoder.r_num_blocks > 0
@@ -71,6 +80,9 @@ class BiU2(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         input_audios, audio_lengths, targets, target_lengths = batch
         losses = self.model(input_audios, audio_lengths, targets, target_lengths)
+        if torch.isinf(losses["loss_ctc"]) or torch.isnan(losses["loss_ctc"]):
+            print(batch_idx, audio_lengths, target_lengths)
+            print(losses["loss_att"])
         self.log("train_loss", losses["loss"], sync_dist=True)
         self.log("train_att_loss", losses["loss_att"], sync_dist=True)
         self.log("train_ctc_loss", losses["loss_ctc"], sync_dist=True)
@@ -123,3 +135,30 @@ class BiU2(pl.LightningModule):
         )
         lr_scheduler = {"interval": "step", "scheduler": scheduler, "name": "AdamW"}
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+
+    # def optimizer_step(
+    #     self,
+    #     epoch,
+    #     batch_idx,
+    #     optimizer,
+    #     optimizer_idx,
+    #     optimizer_closure,
+    #     on_tpu=False,
+    #     using_lbfgs=False,
+    # ):
+    #     """
+    #     Skipping updates in case of unstable gradients
+    #     https://github.com/Lightning-AI/lightning/issues/4956
+    #     """
+    #     valid_gradients = True
+    #     for name, param in self.named_parameters():
+    #         if param.grad is not None:
+    #             valid_gradients = not (torch.isnan(param.grad).any() or torch.isinf(param.grad).any())
+    #             # valid_gradients = not (torch.isnan(param.grad).any())
+    #             if not valid_gradients:
+    #                 break
+    #     if not valid_gradients:
+    #         print("detected inf or nan values in gradients. not updating model parameters")
+    #         self.zero_grad()
+
+    #     optimizer.step(closure=optimizer_closure)
