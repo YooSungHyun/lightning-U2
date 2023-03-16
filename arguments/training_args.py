@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 class TrainingArguments:
     """Help string for this group of command-line arguments"""
 
-    hf_data_dirs: list[str] = field(default_factory=list)
     pl_data_dir: str = "../datasets"
     vocab_path: str = "../config/vocab.json"
     num_shards: int = 1
@@ -25,5 +24,8 @@ class TrainingArguments:
     local_rank: int = None
     div_factor: int = 25  # initial_lr = max_lr/div_factor
     deepspeed_config: str = "ds_config/zero2.json"
-    label_name: str = "syllable_input_ids"
+    group_by_length: bool = False
+    input_name: str = "input_values"
+    label_name: str = "syllabel_labels"
+    length_column_name: str = "input_values"
     encoder_type: str = "conformer"
