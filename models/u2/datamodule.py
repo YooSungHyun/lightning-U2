@@ -2,8 +2,6 @@ import torch
 import pytorch_lightning as pl
 from utils.dataset_utils import get_concat_dataset, get_cache_file_path, set_cache_log
 from utils.config_loader import load_config
-from torchaudio.transforms import MelSpectrogram, TimeMasking, FrequencyMasking
-import numpy as np
 from argparse import Namespace
 from models.u2.dataloader import AudioDataLoader
 from typing import Union
@@ -15,9 +13,6 @@ import datasets
 from models.u2.length_grouped_sampler import LengthGroupedSampler, DistributedLengthGroupedSampler
 import math
 import decimal
-
-# 저는 1 batch로만 테스트되어서 group_by_length sampler가 오히려 느리기만 합니다.
-# from transformers.trainer_pt_utils import DistributedLengthGroupedSampler
 
 
 KERNEL_STRIDE_SIZE = {
@@ -36,7 +31,9 @@ class BiU2DataModule(pl.LightningDataModule):
         self.num_shards = args.num_shards
         self.seed = args.seed
         self.per_device_train_batch_size = args.per_device_train_batch_size
+        self.train_batch_drop_last = args.train_batch_drop_last
         self.per_device_eval_batch_size = args.per_device_eval_batch_size
+        self.eval_batch_drop_last = args.eval_batch_drop_last
         self.accumulate_grad_batches = args.accumulate_grad_batches
         self.num_proc = args.num_proc
         self.group_by_length = args.group_by_length
@@ -54,9 +51,10 @@ class BiU2DataModule(pl.LightningDataModule):
         self.spec_sub_conf = config.data.audio.spec_sub_conf
         self.spec_trim_conf = config.data.audio.spec_trim_conf
         self.filter_conformer_len_prob = config.data.audio.filter_conformer_conf
-        self.kernel_stride_size = KERNEL_STRIDE_SIZE.get(
-            config.model.encoder.input_layer, KERNEL_STRIDE_SIZE["conv2d"]
-        )
+        if "input_layer" in config.model.encoder.keys():
+            self.kernel_stride_size = KERNEL_STRIDE_SIZE[config.model.encoder.input_layer]
+        else:
+            self.kernel_stride_size = KERNEL_STRIDE_SIZE["conv2d"]
         self.audio_processor = AudioProcessor(
             self.speed_aug_conf,
             self.normalize,
@@ -93,7 +91,9 @@ class BiU2DataModule(pl.LightningDataModule):
 
         return input_lengths
 
-    def filter_conformer_ctc_len(self, batch, output_len_prob: float = 1.0):
+    def filter_conformer_ctc_len(
+        self, batch, output_len_prob: float = 1.0, min_frame: float = 1.0, max_frame: float = 9999999999.0
+    ):
         context = decimal.getcontext()
         context.rounding = decimal.ROUND_HALF_UP
         hop_length = int(self.log_mel_conf.sample_rate * self.log_mel_conf.window_stride_sec)
@@ -110,8 +110,14 @@ class BiU2DataModule(pl.LightningDataModule):
         final_mel_spected_len = speed_aug_mel_spected_len - trim_len_penalty
         cnn_output_len = self._get_feat_extract_output_lengths(final_mel_spected_len)
         label_len = len(batch[self.label_name]["input_ids"])
+
+        # 멜스펙 설정 기준 1프레임도 못만드는 녀석이면 날림
+        wav_sec = len(batch[self.input_name]) / self.log_mel_conf.sample_rate
+        ms_frame = wav_sec * 100  # 1 초가 100 frame
+        frame_limit_flag = min_frame < ms_frame < max_frame
+
         # aug 다 적용해서 짧아진 길이 -> Conformer Convolution output으로 짧아진 길이 * 개발자 스레시홀드가 label 보다 커야만함.
-        return (cnn_output_len * output_len_prob).floor() > label_len
+        return frame_limit_flag and (cnn_output_len * output_len_prob).floor() > label_len
 
     def prepare_data(self):
         pass
@@ -119,19 +125,20 @@ class BiU2DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.train_datasets = get_concat_dataset([self.pl_data_dir], "train")
-            cache_file_name = get_cache_file_path(self.pl_data_dir, "mel_len_filter", "train")
-            self.train_datasets = self.train_datasets.filter(
-                self.filter_conformer_ctc_len,
-                num_proc=self.num_proc,
-                cache_file_name=cache_file_name,
-                fn_kwargs=self.filter_conformer_len_prob,
-            )
-            set_cache_log(
-                dataset_dir=self.pl_data_dir,
-                num_proc=self.num_proc,
-                cache_task_func_name="mel_len_filter",
-                train_type="train",
-            )
+            if self.filter_conformer_len_prob:
+                cache_file_name = get_cache_file_path(self.pl_data_dir, "syll_mel_len_filter", "train")
+                self.train_datasets = self.train_datasets.filter(
+                    self.filter_conformer_ctc_len,
+                    num_proc=self.num_proc,
+                    cache_file_name=cache_file_name,
+                    fn_kwargs=self.filter_conformer_len_prob,
+                )
+                set_cache_log(
+                    dataset_dir=self.pl_data_dir,
+                    num_proc=self.num_proc,
+                    cache_task_func_name="syll_mel_len_filter",
+                    train_type="train",
+                )
             if self.group_by_length:
                 if is_datasets_available() and isinstance(self.train_datasets, datasets.Dataset):
                     if self.length_column_name in self.train_datasets.column_names:
@@ -152,37 +159,29 @@ class BiU2DataModule(pl.LightningDataModule):
             )
             self.train_datasets.set_transform(training_get_func)
             self.val_datasets = get_concat_dataset([self.pl_data_dir], "dev")
-            self.val_datasets.set_transform(
-                Compose(
-                    [
-                        self.audio_processor.mean_var_norm,
-                        self.audio_processor.raw_to_logmelspect,
-                        self.audio_processor.output_transpose,
-                    ]
-                )
-            )
+            # TODO: normal false면 여기도 하면 안됨
+            val_pre_processes = list()
+            if self.normalize:
+                val_pre_processes.append(self.audio_processor.mean_var_norm)
+            val_pre_processes.append(self.audio_processor.raw_to_logmelspect)
+            val_pre_processes.append(self.audio_processor.output_transpose)
+            self.val_datasets.set_transform(Compose(val_pre_processes))
 
         if stage == "test":
             self.clean_datasets = get_concat_dataset([self.pl_data_dir], "eval_clean")
-            self.clean_datasets.set_transform(
-                Compose(
-                    [
-                        self.audio_processor.mean_var_norm,
-                        self.audio_processor.raw_to_logmelspect,
-                        self.audio_processor.output_transpose,
-                    ]
-                )
-            )
+            clean_pre_processes = list()
+            if self.normalize:
+                clean_pre_processes.append(self.audio_processor.mean_var_norm)
+            clean_pre_processes.append(self.audio_processor.raw_to_logmelspect)
+            clean_pre_processes.append(self.audio_processor.output_transpose)
+            self.clean_datasets.set_transform(Compose(clean_pre_processes))
             self.other_datasets = get_concat_dataset([self.pl_data_dir], "eval_other")
-            self.other_datasets.set_transform(
-                Compose(
-                    [
-                        self.audio_processor.mean_var_norm,
-                        self.audio_processor.raw_to_logmelspect,
-                        self.audio_processor.output_transpose,
-                    ]
-                )
-            )
+            other_pre_processes = list()
+            if self.normalize:
+                other_pre_processes.append(self.audio_processor.mean_var_norm)
+            other_pre_processes.append(self.audio_processor.raw_to_logmelspect)
+            other_pre_processes.append(self.audio_processor.output_transpose)
+            self.other_datasets.set_transform(Compose(other_pre_processes))
 
     def train_dataloader(self):
         # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 fit() method가 사용합니다.
@@ -201,7 +200,6 @@ class BiU2DataModule(pl.LightningDataModule):
         # Build the sampler.
         if self.group_by_length:
             model_input_name = self.input_name
-            print("@@@@@@@@@@@@@  local_rank: ", self.trainer.local_rank)
             if self.trainer.world_size <= 1:
                 train_sampler = LengthGroupedSampler(
                     self.per_device_train_batch_size * self.accumulate_grad_batches,
@@ -215,10 +213,10 @@ class BiU2DataModule(pl.LightningDataModule):
                     self.per_device_train_batch_size * self.accumulate_grad_batches,
                     dataset=self.train_datasets,
                     num_replicas=self.trainer.world_size,
-                    rank=self.trainer.local_rank,
                     lengths=self.lengths,
                     model_input_name=model_input_name,
                     seed=self.seed,
+                    drop_last=self.train_batch_drop_last,
                 )
             return AudioDataLoader(
                 dataset=self.train_datasets,
