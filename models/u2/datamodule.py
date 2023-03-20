@@ -125,6 +125,7 @@ class BiU2DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.train_datasets = get_concat_dataset([self.pl_data_dir], "train")
+            # before kspon: 612849
             if self.filter_conformer_len_prob:
                 cache_file_name = get_cache_file_path(self.pl_data_dir, "syll_mel_len_filter", "train")
                 self.train_datasets = self.train_datasets.filter(
@@ -159,7 +160,6 @@ class BiU2DataModule(pl.LightningDataModule):
             )
             self.train_datasets.set_transform(training_get_func)
             self.val_datasets = get_concat_dataset([self.pl_data_dir], "dev")
-            # TODO: normal false면 여기도 하면 안됨
             val_pre_processes = list()
             if self.normalize:
                 val_pre_processes.append(self.audio_processor.mean_var_norm)
