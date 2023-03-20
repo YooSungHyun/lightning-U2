@@ -1,13 +1,13 @@
 import pytorch_lightning as pl
 from models.u2.lightningmodule import BiU2
-from utils import read_json, InferenceArguments, get_concat_dataset, dataclass_to_namespace
 import torch
 from simple_parsing import ArgumentParser
-from pyctcdecode import LanguageModel
 import librosa
-from time import time
 import numpy as np
 from torchaudio.transforms import MelSpectrogram
+from utils.comfy import dataclass_to_namespace
+from utils.config_loader import ConfigLoader
+from arguments.inference_args import InferenceArguments
 
 
 def main(hparams):
@@ -86,7 +86,7 @@ def main(hparams):
                 hparams.beam_size,
                 decoding_chunk_size=hparams.decoding_chunk_size,
                 num_decoding_left_chunks=hparams.num_decoding_left_chunks,
-                ctc_weight=hparams.ctc_weight,
+                ctc_weight=0.3,
                 simulate_streaming=hparams.simulate_streaming,
                 reverse_weight=hparams.reverse_weight,
             )
