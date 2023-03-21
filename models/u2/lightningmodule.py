@@ -20,12 +20,10 @@ class BiU2(pl.LightningModule):
         self.args = args
         config_cls = load_config(args.model_config)
         mel_feature_len = config_cls.data.audio.log_mel_conf.n_mels
-        if os.path.isfile(os.path.join(args.output_dir, "tokenizer_config.json")):
-            self.tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(os.path.join(args.output_dir))
-        else:
-            self.tokenizer = Wav2Vec2CTCTokenizer(args.vocab_path)
-            os.makedirs(args.output_dir, exist_ok=True)
-            self.tokenizer.save_pretrained(args.output_dir)
+        self.tokenizer = Wav2Vec2CTCTokenizer(args.vocab_path)
+        os.makedirs(args.output_dir, exist_ok=True)
+        self.tokenizer.save_pretrained(args.output_dir)
+        print("loaded tokenizer:", args.vocab_path, self.tokenizer.decode([5]))
         if "cmvn" in config_cls.keys():
             mean, istd = load_cmvn(config_cls.cmvn.cmvn_file, config_cls.cmvn.is_json_cmvn)
             global_cmvn = GlobalCMVN(torch.from_numpy(mean).float(), torch.from_numpy(istd).float())
@@ -39,7 +37,7 @@ class BiU2(pl.LightningModule):
             encoder = SqueezeformerEncoder(
                 input_size=mel_feature_len, global_cmvn=global_cmvn, **config_cls["model"]["encoder"]
             )
-        elif args.encoder_type == "EfficientConformer":
+        elif args.encoder_type == "efficientconformer":
             encoder = EfficientConformerEncoder(
                 input_size=mel_feature_len,
                 global_cmvn=global_cmvn,
@@ -136,29 +134,29 @@ class BiU2(pl.LightningModule):
         lr_scheduler = {"interval": "step", "scheduler": scheduler, "name": "AdamW"}
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
-    # def optimizer_step(
-    #     self,
-    #     epoch,
-    #     batch_idx,
-    #     optimizer,
-    #     optimizer_idx,
-    #     optimizer_closure,
-    #     on_tpu=False,
-    #     using_lbfgs=False,
-    # ):
-    #     """
-    #     Skipping updates in case of unstable gradients
-    #     https://github.com/Lightning-AI/lightning/issues/4956
-    #     """
-    #     valid_gradients = True
-    #     for name, param in self.named_parameters():
-    #         if param.grad is not None:
-    #             valid_gradients = not (torch.isnan(param.grad).any() or torch.isinf(param.grad).any())
-    #             # valid_gradients = not (torch.isnan(param.grad).any())
-    #             if not valid_gradients:
-    #                 break
-    #     if not valid_gradients:
-    #         print("detected inf or nan values in gradients. not updating model parameters")
-    #         self.zero_grad()
+    def optimizer_step(
+        self,
+        epoch,
+        batch_idx,
+        optimizer,
+        optimizer_idx,
+        optimizer_closure,
+        on_tpu=False,
+        using_lbfgs=False,
+    ):
+        """
+        Skipping updates in case of unstable gradients
+        https://github.com/Lightning-AI/lightning/issues/4956
+        """
+        valid_gradients = True
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                valid_gradients = not (torch.isnan(param.grad).any() or torch.isinf(param.grad).any())
+                # valid_gradients = not (torch.isnan(param.grad).any())
+                if not valid_gradients:
+                    break
+        if not valid_gradients:
+            print("detected inf or nan values in gradients. not updating model parameters")
+            self.zero_grad()
 
-    #     optimizer.step(closure=optimizer_closure)
+        optimizer.step(closure=optimizer_closure)
