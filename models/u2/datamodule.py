@@ -100,24 +100,24 @@ class BiU2DataModule(pl.LightningDataModule):
         hop_length = int(self.log_mel_conf.sample_rate * self.log_mel_conf.window_stride_sec)
 
         speed_len_penalty = max(self.speed_aug_conf.speeds) if self.speed_aug_conf else 1.0
-        # 배속 음성길이: 반올림(전체길이/배속)
-        # 멜 스펙트로그램 변환 길이: 내림(전체길이/hop_length) + 1 -> 반올림은 반만 적용되는 리스크가 있어서, 내린다음 +1함
+        # speed change len: round(total_len/speed change ratio )
+        # mel spectrogram len : floor(total_len/hop_length) + 1 -> round have some risk. so floor first and +1
         speed_aug_mel_spected_len = (
             math.floor(int(round(decimal.Decimal(len(batch[self.input_name]) / speed_len_penalty), 0)) / hop_length)
             + 1
         )
         trim_len_penalty = self.spec_trim_conf.max_t if self.spec_trim_conf else 0
-        # 트림 aug 음성길이: 전체길이 - trim max길이 -> trim은 1~max를 랜덤으로 샘플링하지만, 현재 시점에는 랜덤값을 알 수 없으므로, max 기준으로 필터링
+        # trim aug audio len: total len - trim max len -> trim is random sampled 1~max, but we can know just max len right here
         final_mel_spected_len = speed_aug_mel_spected_len - trim_len_penalty
         cnn_output_len = self._get_feat_extract_output_lengths(final_mel_spected_len)
         label_len = len(batch[self.label_name]["input_ids"])
 
         # 멜스펙 설정 기준 1프레임도 못만드는 녀석이면 날림
         wav_sec = len(batch[self.input_name]) / self.log_mel_conf.sample_rate
-        ms_frame = wav_sec * 100  # 1 초가 100 frame
+        ms_frame = wav_sec * 100  # 1 sec == 100 frame
         frame_limit_flag = min_frame < ms_frame < max_frame
 
-        # aug 다 적용해서 짧아진 길이 -> Conformer Convolution output으로 짧아진 길이 * 개발자 스레시홀드가 label 보다 커야만함.
+        # (trimaug, speed perturb -> (Conformer Convolution output len * threshold)) > label_len
         return frame_limit_flag and (cnn_output_len * output_len_prob).floor() > label_len
 
     def prepare_data(self):
@@ -126,7 +126,6 @@ class BiU2DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.train_datasets = get_concat_dataset(self.pl_data_dirs, "train")
-            # before kspon: 612849
             if self.filter_conformer_len_prob:
                 cache_file_name = get_cache_file_path(self.cache_main_dir, "syll_mel_len_filter", "train")
                 self.train_datasets = self.train_datasets.filter(
@@ -179,7 +178,6 @@ class BiU2DataModule(pl.LightningDataModule):
             self.other_datasets.set_transform(Compose(other_pre_processes))
 
     def train_dataloader(self):
-        # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 fit() method가 사용합니다.
         generator = None
         if self.trainer.world_size <= 1:
             generator = torch.Generator()
@@ -232,7 +230,6 @@ class BiU2DataModule(pl.LightningDataModule):
             )
 
     def val_dataloader(self):
-        # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 fit(), validate() method가 사용합니다.
         return AudioDataLoader(
             dataset=self.val_datasets,
             batch_size=self.per_device_eval_batch_size,
@@ -243,7 +240,6 @@ class BiU2DataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
-        # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 test() method가 사용합니다.
         return [
             AudioDataLoader(
                 dataset=self.clean_datasets,
@@ -264,5 +260,4 @@ class BiU2DataModule(pl.LightningDataModule):
         ]
 
     def predict_dataloader(self):
-        # setup에서 완성된 datasets를 여기서 사용하십시오. trainer의 predict() method가 사용합니다.
         pass

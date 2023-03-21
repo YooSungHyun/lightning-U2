@@ -215,7 +215,7 @@ class ASRModel(torch.nn.Module):
         batch_size = speech.shape[0]
 
         # Let's assume B = batch_size and N = beam_size
-        # 1. Encoder
+        # 1. Encoder (not important comment)
         # 청크 단위로 데이터가 들어오면, Encoder의 은닉상태를 cache로 계속 저장하여 다음상태에게 넘겨줌으로써,
         # 다음 인코더에서의 어텐션과 Conformer Module에서 사용되어, 이후 Decoder Text예측에 사용된다.
         encoder_out, encoder_mask = self._forward_encoder(
@@ -497,10 +497,10 @@ class ASRModel(torch.nn.Module):
         hyps_lens = torch.tensor([len(hyp[0]) for hyp in hyps], device=device, dtype=torch.long)  # (beam_size,)
         hyps_pad, _ = add_sos_eos(hyps_pad, self.sos, self.eos, self.ignore_id)  # output is not necessary
         hyps_lens = hyps_lens + 1  # Add <sos> at begining
-        encoder_out = encoder_out.repeat(beam_size, 1, 1)  # left, right여서 2배로 늘리는 것일지...?
+        encoder_out = encoder_out.repeat(beam_size, 1, 1)  # make batch size count
         encoder_mask = torch.ones(
             beam_size, 1, encoder_out.size(1), dtype=torch.bool, device=device
-        )  # 음성 pad가 없어서 이거는 무조건 다 1로 채움
+        )  # we calculate one audio at once. so no batch and no encoder padding
         # used for right to left decoder
         r_hyps_pad = reverse_pad_list(ori_hyps_pad, hyps_lens, self.ignore_id)
         r_hyps_pad, _ = add_sos_eos(r_hyps_pad, self.sos, self.eos, self.ignore_id)
@@ -519,10 +519,10 @@ class ASRModel(torch.nn.Module):
         for beam_idx, ctc_hyp in enumerate(hyps):
             score = 0.0
             for time_idx, vocab_idx in enumerate(ctc_hyp[0]):
-                # ctc에서 최고로 뽑힌 각 vocab의 decoder 결과를 확인함
-                # 다 더하면, ctc에서 최고로 뽑힌 vocab들의 decoder 시점의 최종 스코어가 나옴
+                # find decoder vocab's prob in ctc's beam best prob
+                # finally when we all sum, ctc's max prob vocab's decoder output final score
                 score += decoder_out[beam_idx][time_idx][vocab_idx]
-            # generate가 무조건 max_len까지밖에 진행을 못하므로, eos는 따로 더해줌 (앞에서 계산 안함.)
+            # generate can doing at max_len, eos is have to calculate separately
             score += decoder_out[beam_idx][len(ctc_hyp[0])][self.eos]
             # add right to left decoder score
             if reverse_weight > 0:
@@ -533,7 +533,7 @@ class ASRModel(torch.nn.Module):
                 score = score * (1 - reverse_weight) + r_score * reverse_weight
             # add ctc score
             score += ctc_hyp[1] * ctc_weight
-            # left_decoder score + right_decoder score + ctc score 결과로 최종 beam 결과 선정
+            # left_decoder score + right_decoder score + ctc score = finally winner
             if score > best_score:
                 best_score = score
                 best_index = beam_idx
