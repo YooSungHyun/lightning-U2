@@ -19,7 +19,7 @@ pre-made HuggingFace Style Datasets looks like this, <br />
 
 **wenet used same like group_by_length**
 
-- HuggingFace의 Audio FeatureExtractor와 Tokenizer를 사용해보신 분들이라면, 최대한 익숙할 수 있도록 naming하여 사용되었습니다. <br />
+- Mayby, If you used HuggingFace's Audio FeatureExtractor and Tokenizer, not feeling uncomfortable <br />
 - `get_concat_dataset` is fit on sharded dataset <br />
   - **Example**
   - datasets root folder
