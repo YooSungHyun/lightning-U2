@@ -1,5 +1,5 @@
 import os
-import json
+import shutil
 import pytorch_lightning as pl
 from pytorch_lightning.strategies import DDPStrategy
 from datetime import timedelta
@@ -45,16 +45,11 @@ def main(hparams):
 
     datamodule = BiU2DataModule(hparams)
     model = BiU2(hparams)
+    # tokenizer and model config save
+    shutil.copyfile(hparams.model_config, os.path.join(hparams.output_dir, "config.yaml"))
+    model.tokenizer.save_pretrained(hparams.output_dir)
     wandb_logger.watch(model, log="all")
     trainer.fit(model, datamodule=datamodule)
-    """ TODO If use config like dict follow this line
-    but, model param is duplicated area between training param and model param
-    I want to get training param on run script argument, so I can not use it
-    """
-    # config_cls = load_config(hparams.config_dir)
-    # config = config_to_dict(config_cls)
-    # with open(os.path.join(hparams.output_dir, "config.json"), "w") as f:
-    # json.dump(config, f, ensure_ascii=False, indent=4)
     checkpoint_callback.best_model_path
 
 

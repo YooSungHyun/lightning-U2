@@ -21,8 +21,6 @@ class BiU2(pl.LightningModule):
         config_cls = load_config(args.model_config)
         mel_feature_len = config_cls.data.audio.log_mel_conf.n_mels
         self.tokenizer = Wav2Vec2CTCTokenizer(args.vocab_path)
-        os.makedirs(args.output_dir, exist_ok=True)
-        self.tokenizer.save_pretrained(args.output_dir)
         print("loaded tokenizer:", args.vocab_path, self.tokenizer.decode([5]))
         if "cmvn" in config_cls.keys():
             mean, istd = load_cmvn(config_cls.cmvn.cmvn_file, config_cls.cmvn.is_json_cmvn)
