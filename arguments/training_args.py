@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
 class TrainingArguments:
     """Help string for this group of command-line arguments"""
 
-    pl_data_dir: str = "../datasets"
+    pl_data_dirs: Optional[List[str]] = field(default=None)
+    cache_main_dir: str = "./cache"
     vocab_path: str = "../config/vocab.json"
     num_shards: int = 1
     num_proc: int = None

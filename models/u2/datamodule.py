@@ -1,6 +1,6 @@
 import torch
 import pytorch_lightning as pl
-from utils.dataset_utils import get_concat_dataset, get_cache_file_path, set_cache_log
+from utils.dataset_utils import get_concat_dataset, get_cache_file_path
 from utils.config_loader import load_config
 from argparse import Namespace
 from models.u2.dataloader import AudioDataLoader
@@ -27,7 +27,8 @@ class BiU2DataModule(pl.LightningDataModule):
     # https://pytorch-lightning.readthedocs.io/en/stable/data/datamodule.html#datamodules
     def __init__(self, args: Namespace):
         super().__init__()
-        self.pl_data_dir = args.pl_data_dir
+        self.pl_data_dirs = args.pl_data_dirs
+        self.cache_main_dir = args.cache_main_dir
         self.num_shards = args.num_shards
         self.seed = args.seed
         self.per_device_train_batch_size = args.per_device_train_batch_size
@@ -124,21 +125,15 @@ class BiU2DataModule(pl.LightningDataModule):
 
     def setup(self, stage: str):
         if stage == "fit":
-            self.train_datasets = get_concat_dataset([self.pl_data_dir], "train")
+            self.train_datasets = get_concat_dataset(self.pl_data_dirs, "train")
             # before kspon: 612849
             if self.filter_conformer_len_prob:
-                cache_file_name = get_cache_file_path(self.pl_data_dir, "syll_mel_len_filter", "train")
+                cache_file_name = get_cache_file_path(self.cache_main_dir, "syll_mel_len_filter", "train")
                 self.train_datasets = self.train_datasets.filter(
                     self.filter_conformer_ctc_len,
                     num_proc=self.num_proc,
                     cache_file_name=cache_file_name,
                     fn_kwargs=self.filter_conformer_len_prob,
-                )
-                set_cache_log(
-                    dataset_dir=self.pl_data_dir,
-                    num_proc=self.num_proc,
-                    cache_task_func_name="syll_mel_len_filter",
-                    train_type="train",
                 )
             if self.group_by_length:
                 if is_datasets_available() and isinstance(self.train_datasets, datasets.Dataset):
@@ -159,7 +154,9 @@ class BiU2DataModule(pl.LightningDataModule):
                 ]
             )
             self.train_datasets.set_transform(training_get_func)
-            self.val_datasets = get_concat_dataset([self.pl_data_dir], "dev")
+            self.val_datasets = get_concat_dataset(
+                ["/ext_disk/stt/datasets/fine-tuning/42maru/data-KsponSpeech-42maru-not-normal-20"], "dev"
+            )
             val_pre_processes = list()
             if self.normalize:
                 val_pre_processes.append(self.audio_processor.mean_var_norm)
@@ -168,14 +165,14 @@ class BiU2DataModule(pl.LightningDataModule):
             self.val_datasets.set_transform(Compose(val_pre_processes))
 
         if stage == "test":
-            self.clean_datasets = get_concat_dataset([self.pl_data_dir], "eval_clean")
+            self.clean_datasets = get_concat_dataset([self.pl_data_dirs], "eval_clean")
             clean_pre_processes = list()
             if self.normalize:
                 clean_pre_processes.append(self.audio_processor.mean_var_norm)
             clean_pre_processes.append(self.audio_processor.raw_to_logmelspect)
             clean_pre_processes.append(self.audio_processor.output_transpose)
             self.clean_datasets.set_transform(Compose(clean_pre_processes))
-            self.other_datasets = get_concat_dataset([self.pl_data_dir], "eval_other")
+            self.other_datasets = get_concat_dataset([self.pl_data_dirs], "eval_other")
             other_pre_processes = list()
             if self.normalize:
                 other_pre_processes.append(self.audio_processor.mean_var_norm)
@@ -212,7 +209,6 @@ class BiU2DataModule(pl.LightningDataModule):
                 train_sampler = DistributedLengthGroupedSampler(
                     self.per_device_train_batch_size * self.accumulate_grad_batches,
                     dataset=self.train_datasets,
-                    num_replicas=self.trainer.world_size,
                     lengths=self.lengths,
                     model_input_name=model_input_name,
                     seed=self.seed,
