@@ -2,6 +2,8 @@ data:
   audio:
     filter_conformer_conf:
       output_len_prob: 1.0
+      min_frame: 1 # 길이 160 이하 wav는 날림
+      max_frame: 999999999
     log_mel_conf:
       n_mels: 80
       sample_rate: 16000
@@ -15,9 +17,9 @@ data:
       freq_mask_para: 10
       time_mask_cnt: 2
       time_mask_para: 50
-    spec_sub_conf: null
-      # max_t: 30
-      # num_t_sub: 3
+    spec_sub_conf:
+      max_t: 30
+      num_t_sub: 3
     spec_trim_conf: null
       # max_t: 50
     speed_aug_conf:
@@ -61,4 +63,3 @@ model:
   length_normalized_loss: false
   lsm_weight: 0.1
   reverse_weight: 0.3
-  vocab_size: 72

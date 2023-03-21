@@ -495,10 +495,12 @@ class ASRModel(torch.nn.Module):
         )  # (beam_size, max_hyps_len)
         ori_hyps_pad = hyps_pad
         hyps_lens = torch.tensor([len(hyp[0]) for hyp in hyps], device=device, dtype=torch.long)  # (beam_size,)
-        hyps_pad, _ = add_sos_eos(hyps_pad, self.sos, self.eos, self.ignore_id)
+        hyps_pad, _ = add_sos_eos(hyps_pad, self.sos, self.eos, self.ignore_id)  # output is not necessary
         hyps_lens = hyps_lens + 1  # Add <sos> at begining
-        encoder_out = encoder_out.repeat(beam_size, 1, 1)
-        encoder_mask = torch.ones(beam_size, 1, encoder_out.size(1), dtype=torch.bool, device=device)
+        encoder_out = encoder_out.repeat(beam_size, 1, 1)  # left, right여서 2배로 늘리는 것일지...?
+        encoder_mask = torch.ones(
+            beam_size, 1, encoder_out.size(1), dtype=torch.bool, device=device
+        )  # 음성 pad가 없어서 이거는 무조건 다 1로 채움
         # used for right to left decoder
         r_hyps_pad = reverse_pad_list(ori_hyps_pad, hyps_lens, self.ignore_id)
         r_hyps_pad, _ = add_sos_eos(r_hyps_pad, self.sos, self.eos, self.ignore_id)
@@ -514,23 +516,27 @@ class ASRModel(torch.nn.Module):
         # Only use decoder score for rescoring
         best_score = -float("inf")
         best_index = 0
-        for i, hyp in enumerate(hyps):
+        for beam_idx, ctc_hyp in enumerate(hyps):
             score = 0.0
-            for j, w in enumerate(hyp[0]):
-                score += decoder_out[i][j][w]
-            score += decoder_out[i][len(hyp[0])][self.eos]
+            for time_idx, vocab_idx in enumerate(ctc_hyp[0]):
+                # ctc에서 최고로 뽑힌 각 vocab의 decoder 결과를 확인함
+                # 다 더하면, ctc에서 최고로 뽑힌 vocab들의 decoder 시점의 최종 스코어가 나옴
+                score += decoder_out[beam_idx][time_idx][vocab_idx]
+            # generate가 무조건 max_len까지밖에 진행을 못하므로, eos는 따로 더해줌 (앞에서 계산 안함.)
+            score += decoder_out[beam_idx][len(ctc_hyp[0])][self.eos]
             # add right to left decoder score
             if reverse_weight > 0:
                 r_score = 0.0
-                for j, w in enumerate(hyp[0]):
-                    r_score += r_decoder_out[i][len(hyp[0]) - j - 1][w]
-                r_score += r_decoder_out[i][len(hyp[0])][self.eos]
+                for r_time_idx, r_vocab_idx in enumerate(ctc_hyp[0]):
+                    r_score += r_decoder_out[beam_idx][len(ctc_hyp[0]) - r_time_idx - 1][r_vocab_idx]
+                r_score += r_decoder_out[beam_idx][len(ctc_hyp[0])][self.eos]
                 score = score * (1 - reverse_weight) + r_score * reverse_weight
             # add ctc score
-            score += hyp[1] * ctc_weight
+            score += ctc_hyp[1] * ctc_weight
+            # left_decoder score + right_decoder score + ctc score 결과로 최종 beam 결과 선정
             if score > best_score:
                 best_score = score
-                best_index = i
+                best_index = beam_idx
         return hyps[best_index][0], best_score
 
     # def load_hlg_resource_if_necessary(self, hlg, word):
