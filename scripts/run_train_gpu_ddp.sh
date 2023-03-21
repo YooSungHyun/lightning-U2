@@ -1,18 +1,21 @@
 #!/bin/bash
 GPU_IDS="0,1,2,3"
 PL_DATA_DIR="
-
+/ext_disk/stt/datasets/fine-tuning/42maru/data-KconfSpeech-42maru-not-normal-60
+/ext_disk/stt/datasets/fine-tuning/42maru/data-KoreanSpeech-42maru-not-normal-90
+/ext_disk/stt/datasets/fine-tuning/42maru/data-KrespSpeech-42maru-not-normal-60
+/ext_disk/stt/datasets/fine-tuning/42maru/data-KsponSpeech-42maru-not-normal-20
 "
 
 OMP_NUM_THREADS=16 \
 CUDA_VISIBLE_DEVICES=$GPU_IDS \
 python3 -m torch.distributed.launch --master_port=55555 --nproc_per_node=4 train.py \
     --pl_data_dir $PL_DATA_DIR \
-    --cache_main_dir= \
+    --cache_main_dir=/ext_disk/stt/datasets/fine-tuning/42maru \
     --num_shards=20 \
     --model_config="./config/conformer_u2++.yaml" \
-    --vocab_path="./config/vocab.json" \
-    --output_dir="../model_outputs" \
+    --vocab_path="./config/syllabel_vocab.json" \
+    --output_dir="../syllabel_outputs" \
     --seed=42 \
     --num_proc=12 \
     --per_device_train_batch_size=16 \
@@ -31,7 +34,7 @@ python3 -m torch.distributed.launch --master_port=55555 --nproc_per_node=4 train
     --warmup_ratio=0.01 \
     --final_div_factor=10 \
     --div_factor=20 \
-    --label_name=labels \
+    --label_name=syllabel_labels \
     --group_by_length=true \
     --input_name=input_values \
     --length_column_name=length \
