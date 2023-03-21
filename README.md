@@ -14,8 +14,7 @@ pre-made HuggingFace Style Datasets looks like this, <br />
 > }) <br />
 
 **input_values**: not normalized raw audio. librosa loaded 16000 sample_rate float32 <br />
-**labels**: ground truth label
-&nbsp;&nbsp;&nbsp;&nbsp;**input_ids**: tokenized integer value <br />
+**[labels][input_ids]**: ground truth label's tokenized integer value <br />
 **length**: len(input_values). It is used HuggingFace style SmartBatching(group_by_length). <br />
 
 **wenet used same like group_by_length**
