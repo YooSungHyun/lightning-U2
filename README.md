@@ -2,6 +2,8 @@
 
 this code is followed by https://github.com/wenet-e2e/wenet and converted pytorch-lightning⚡
 
+implement ver: python3.9
+
 # Data & Datasets
 
 ## Must use pre-made HuggingFace Datasets!!
